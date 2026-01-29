@@ -1,102 +1,95 @@
 #include "ftracehooking.h"
 
- 
-static asmlinkage long (*real_os_ftrace)(pid_t pid); // 원래의 os_ftrace system call 주소를 저장할 함수 포인터
+/* ============================================================
+ *  Global variables
+ * ============================================================ */
 
-/////////////////////////////////////////////
-// 1. system call hooking function (os_ftrace() -> my_ftrace() )
-///////////////////////////////////////////
-asmlinkage long my_ftrace(pid_t pid)
-{
-   // printk(KERN_INFO "my_ftrace called with pid=%d\n", pid); // for debug
-    if (traced_pid && pid ==traced_pid)
-    {
-      //  printk(KERN_INFO "OS Assignment 2 ftrace [%d] End\n", traced_pid);
-        stop_io_trace();
-        traced_pid = 0;
-	return 0;
-    } 
-   
-    if (pid > 0) { // START
-       // printk(KERN_INFO "OS Assignment 2 ftrace [%d] Start\n",pid);
-        start_io_trace(pid);
-    }
-    return 0;
-}
+/* syscall number */
+#define __NR_OS_FTRACE 336
 
-////////////////////////////////////////////////
-// 2. sys_call_table 수정 관련 함수
-// ////////////////////////////////////////////
+/* original syscall pointer */
+typedef asmlinkage long(*os_ftrace_t)(pid_t);
 
-static unsigned long **sys_call_table; // 시스템 콜 테이블 주소 저장할 포인터
+static os_ftrace_t real_os_ftrace;
+static unsigned long **sys_call_table;
 
-// 쓰기 허용으로 바꾸는 함수
-static void make_rw(void *addr)
+/* ============================================================
+ *  Page permission helpers
+ * ============================================================ */
+static void make_rw(void* addr)
 {
     unsigned int level;
-    pte_t *pte = lookup_address((unsigned long)addr, &level);
-    if (!(pte->pte & _PAGE_RW))
-        pte->pte |= _PAGE_RW;
+    pte_t* pte = lookup_address((unsigned long)addr, &level);
+
+    if (!pte) return;
+    if (!(pte->pte & _PAGE_RW))pte->pte |= _PAGE_RW;
 }
 
-// 읽기 전용으로 바꾸는 함수
-static void make_ro(void *addr)
+static void make_ro(void* addr)
 {
     unsigned int level;
-    pte_t *pte = lookup_address((unsigned long)addr, &level);
+    pte_t* pte = lookup_address((unsigned long)addr, &level);
+
+    if (!pte) return;
     pte->pte &= ~_PAGE_RW;
 }
 
-
-///////////////////////////////////// ///////////
-// 3. 커널 모듈 초기화 (insmod 시 실행됨 )
-// ///////////////////////////////////////////////
-
-// 모듈 로드시 후킹
-static int __init hook_init(void)
+/* ============================================================
+ *  Hooked os_ftrace syscall
+ * ============================================================ */
+asmlinkage long my_ftrace(pid_t pid)
 {
-
-    // hijack 
-    // sys_call_table의 실제 주소를 커널 심볼 테이블에서 검색
-    sys_call_table = (unsigned long**)kallsyms_lookup_name("sys_call_table");
-    
-    // 예외처리
-    if (!sys_call_table) {
-        printk(KERN_ERR "Cannot find sys_call_table\n");
-        return -1;
+    /* stop tracing */
+    if (traced_pid && pid ==traced_pid){
+        stop_io_trace();
+        traced_pid = 0;
+	    return 0;
+    } 
+   
+    /* start tracing */
+    if (pid > 0) { 
+        start_io_trace(pid);
     }
 
-    // 원래의 os_ftrace  시스템 콜 주소 백업해놓기
-    real_os_ftrace = (void *)sys_call_table[548]; 
-    
-    // sys_call_table 을 쓰기 가능 상태로 변경 후 함수 주소를 교체
-    make_rw(sys_call_table);
-    sys_call_table[548] = (unsigned long*)my_ftrace; // 새로운 handler 등
-    make_ro(sys_call_table);
-
-    //printk(KERN_INFO "os_ftrace hooked to my_ftrace\n");
     return 0;
 }
 
-////////////////////////////////////////////
-// 4. 커널 모듈 종료 (rmmod 시 실행됨)
-// ////////////////////////////////////////
-static void __exit hook_exit(void)
+
+/* ============================================================
+ *  Module init / exit
+ * ============================================================ */
+static int __init hook_init(void)
 {
-    // sys_call_table 이 유요하면 원래의 함수로 복원
-    if (sys_call_table && real_os_ftrace)
-    {
-        make_rw(sys_call_table);
-        sys_call_table[548] = (unsigned long*)real_os_ftrace;
-        make_ro(sys_call_table);
-       // printk(KERN_INFO "os_ftrace restored\n");
+    sys_call_table = (unsigned long**)kallsyms_lookup_name("sys_call_table");
+    
+    if (!sys_call_table) {
+        printk(KERN_ERR "[ftrace] sys_call_table not found\n");
+        return -EINVAL;
     }
+
+    /* backup original syscall */
+    real_os_ftrace = (os_ftrace_t)sys_call_table[__NR_OS_FTRACE]; 
+    
+    make_rw(sys_call_table);
+    sys_call_table[__NR_OS_FTRACE] = (unsigned long*)my_ftrace; 
+    make_ro(sys_call_table);
+
+    printk(KERN_INFO "[ftrace] os_ftrace hooked\n");
+    return 0;
 }
 
-///////////////////////////////
-// 5. 모듈 메타 정보
-// //////////////////////////
+static void __exit hook_exit(void)
+{
+    if (!sys_call_table || !real_os_ftrace) return;
+     
+     make_rw(sys_call_table);
+     sys_call_table[__NR_OS_FTRACE] = (unsigned long*)real_os_ftrace;
+     make_ro(sys_call_table);
+     
+     printk(KERN_INFO "[ftrace] os_ftrace restored\n");
+    
+}
 
-module_init(hook_init); // insmod 시 호출되는 함수 지정
-module_exit(hook_exit); // rmmod 시 호출되는 함수 지정
-MODULE_LICENSE("GPL"); //GPL 라이선스 명시
+module_init(hook_init); 
+module_exit(hook_exit); 
+MODULE_LICENSE("GPL"); 

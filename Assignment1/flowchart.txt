@@ -1,0 +1,71 @@
+[User Program]
+      |
+      |  syscall: os_ftrace(pid)
+      v
+=================================================
+ ftracehooking.c
+=================================================
+      |
+      | 1. sys_call_table[__NR_OS_FTRACE]
+      |    → my_ftrace 로 후킹됨
+      v
+-------------------------------------------------
+ my_ftrace(pid)
+-------------------------------------------------
+      |
+      | if (pid > 0)
+      |     └─ start_io_trace(pid)
+      |
+      | else if (pid == traced_pid)
+      |     └─ stop_io_trace()
+      v
+
+=================================================
+ iotracehooking.c
+=================================================
+
+ start_io_trace(pid)
+      |
+      | 2. sys_call_table 접근
+      | 3. open/read/write/lseek/close
+      |    시스템콜 주소 백업
+      |
+      | 4. sys_call_table 치환
+      |    ├─ __NR_openat → ftrace_openat
+      |    ├─ __NR_read   → ftrace_read
+      |    ├─ __NR_write  → ftrace_write
+      |    ├─ __NR_lseek  → ftrace_lseek
+      |    └─ __NR_close  → ftrace_close
+      |
+      v
+-------------------------------------------------
+ [Tracing Active]
+-------------------------------------------------
+      |
+      | process executes file I/O
+      |
+      | open/read/write/close
+      v
+-------------------------------------------------
+ ftrace_openat()
+ ftrace_read()
+ ftrace_write()
+ ftrace_lseek()
+ ftrace_close()
+-------------------------------------------------
+      |
+      | → statistics collection
+      | → original syscall 호출
+      v
+
+=================================================
+ stop_io_trace()
+=================================================
+      |
+      | 5. sys_call_table 원복
+      | 6. 통계 출력
+      | 7. tracing 종료
+      v
+-------------------------------------------------
+ [Tracing End]
+-------------------------------------------------
