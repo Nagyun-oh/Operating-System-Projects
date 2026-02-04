@@ -1,89 +1,22 @@
 1. 프로젝트 개요 (Overview)
-   -  Assignment 1-1 : Make os_ftrace system call
-   -  Assignment 1-2 : Make Wrapping & hooking modules
-   -  Assignment 1-3 : Make trace modules
+-  Assignment 1-1 : Make os_ftrace system call
+-  Assignment 1-2 : Make Wrapping & hooking modules
+-  Assignment 1-3 : Make trace modules
 
 2. 설계 및 구현 상세 (Design & Implementation)
-[User Program]
-      |
-      |  syscall: os_ftrace(pid)
-      v
-=================================================
- ftracehooking.c
-=================================================
-      |
-      | 1. sys_call_table[__NR_OS_FTRACE]
-      |    → my_ftrace 로 후킹됨
-      v
--------------------------------------------------
- my_ftrace(pid)
--------------------------------------------------
-      |
-      | if (pid > 0)
-      |     └─ start_io_trace(pid)
-      |
-      | else if (pid == traced_pid)
-      |     └─ stop_io_trace()
-      v
 
-=================================================
- iotracehooking.c
-=================================================
+- Assignment 1-1
 
- start_io_trace(pid)
-      |
-      | 2. sys_call_table 접근
-      | 3. open/read/write/lseek/close
-      |    시스템콜 주소 백업
-      |
-      | 4. sys_call_table 치환
-      |    ├─ __NR_openat → ftrace_openat
-      |    ├─ __NR_read   → ftrace_read
-      |    ├─ __NR_write  → ftrace_write
-      |    ├─ __NR_lseek  → ftrace_lseek
-      |    └─ __NR_close  → ftrace_close
-      |
-      v
--------------------------------------------------
- [Tracing Active]
--------------------------------------------------
-      |
-      | process executes file I/O
-      |
-      | open/read/write/close
-      v
--------------------------------------------------
- ftrace_openat()
- ftrace_read()
- ftrace_write()
- ftrace_lseek()
- ftrace_close()
--------------------------------------------------
-      |
-      | → statistics collection
-      | → original syscall 호출
-      v
+![alt text](images/flowchart1.png)
 
-=================================================
- stop_io_trace()
-=================================================
-      |
-      | 5. sys_call_table 원복
-      | 6. 통계 출력
-      | 7. tracing 종료
-      v
--------------------------------------------------
- [Tracing End]
--------------------------------------------------
+- Assignment 1-2, 1-3
 
-
+![alt text](images/flowchart2.png)
 
 ---
 
-2.2.핵심 코드
+2.2. 핵심 코드
  
-**핵심 데이터 구조:** 과제에서 정의하거나 사용한 주요 구조체(struct) 설명
-
 - Assignment 1-1 
 ```
 // Define System call
@@ -148,7 +81,6 @@ static void __exit hook_exit(void)
 }
 
 ```
-
 
 **Assignmnet 1-3**
 
@@ -266,13 +198,11 @@ EXPORT_SYMBOL(stop_io_trace);
 
 ---
 
+3. 커널 수정 및 빌드 절차 
 
+**빌드 및 설치:**
 
-3. 커널 수정 및 빌드 절차 (Kernel Modification & Build)
-
-**빌드 및 설치:** 커널 소스 트리 내에서 변경하거나 추가한 파일 경로
-
-   3-1. Kernel Compile
+3-1. Kernel Compile
 
 ![alt text](images/kernel-compile.png)
 
@@ -359,39 +289,41 @@ EXPORT_SYMBOL(stop_io_trace);
 ---
 <br>
 
-4. 리팩토링 및 최적화 사항 (Refactoring Details)
+4. 리팩토링 및 최적화 사항 
 
 ### 목표
 - 코드 가독성 향상 및 커널 안정성 확보
 - 중복 로직 제거 및 함수 단위 기능 분리
 
 ###  주요 수정 사항
-1. **Assignment 1-2: Process Tracer**
-   -  중복된 ftrace wrapper 제거
-   -  불필요한 __SYSCALL_DEFINEX 사용 제거
-   -  하드코딩된 syscall 번호(336) 상수화
-   -  syscall index 의존성 명확화
-   -  로그 메시지 통일
-   -  make_rw / make_ro 안정성 강화
-   -  함수 선언 위치 정리
-   -  static / const 정확히 사용
-   -  커널 코딩 컨벤션 정렬
-2. **Assignment 1-3: Process Tracer**
-   - 중복 코드 정리
-   - 시스템 콜 매직 넘버 제거
-   - 함수 포인터 타입 추상화 (typedef)
-   - 후킹 로직 흐름 구조 개선
-   - 디버그 로그 정리 및 최소화
-   - 전역 통계 구조 초기화 위치 개선
-   - 코드 스타일 및 주석 형식 통일
+
+**Assignment 1-2: Process Tracer**
+-  중복된 ftrace wrapper 제거
+-  불필요한 __SYSCALL_DEFINEX 사용 제거
+-  하드코딩된 syscall 번호(336) 상수화
+-  syscall index 의존성 명확화
+-  로그 메시지 통일
+-  make_rw / make_ro 안정성 강화
+-  함수 선언 위치 정리
+-  static / const 정확히 사용
+-  커널 코딩 컨벤션 정렬
+
+**Assignment 1-3: Process Tracer**
+- 중복 코드 정리
+- 시스템 콜 매직 넘버 제거
+- 함수 포인터 타입 추상화 (typedef)
+- 후킹 로직 흐름 구조 개선
+- 디버그 로그 정리 및 최소화
+- 전역 통계 구조 초기화 위치 개선
+- 코드 스타일 및 주석 형식 통일
 
 ---
 
-5. 실행 결과 및 테스트 (Verification)
+5. 실행 결과 및 테스트 
 
-- **테스트 시나리오:** 구현한 기능을 검증하기 위해 작성한 테스트 케이스 설명
+**테스트 시나리오:** 
 
-- Assignment 1-1
+Assignment 1-1
 
 1) System call table 등록
 
@@ -411,7 +343,9 @@ EXPORT_SYMBOL(stop_io_trace);
 
 7) 로그 확인
 
-- Assignment 1-2
+---
+
+Assignment 1-2
 
 1) 모듈 소스 프로그램 작성 – os_ftracehooking.c
 
@@ -426,12 +360,13 @@ EXPORT_SYMBOL(stop_io_trace);
 
 6) 모듈 동작 확인
 
-
 7) 모듈 제거 
 
 8) 로그 확인
 
-- Assignment 1-3
+---
+
+Assignment 1-3
 
 1) ftracehooking.h 작성 - 구조체 정의
 
@@ -458,9 +393,11 @@ EXPORT_SYMBOL(stop_io_trace);
 
 10) 로그 확인
 
-- **예외 상황 테스트:** 잘못된 입력값이나 환경에서의 에러 핸들러 동작 확인
+---
 
+**예외 상황 테스트:** 잘못된 입력값이나 환경에서의 에러 핸들러 동작 확인
 
+===작성예정===
 
 ---
 
@@ -589,13 +526,9 @@ EXPORT_SYMBOL(stop_io_trace);
 
 ---
 
-
 - **한계점 및 향후 개선 방향:** 현재 구현의 제약 사항이나 추가하고 싶은 기능
 
 - Docker 사용으로 자동화
-
-
-
 
 
 ---
