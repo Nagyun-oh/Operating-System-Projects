@@ -9,9 +9,9 @@
 | 단계 | 주요 주제 | 핵심 구현 내용 | 레포트 |
 | :--- | :--- | :--- | :---: |
 | **AS1** | **System Call & Hooking** | `os_ftrace` 시스템 콜 등록, 커널 모듈 적재, syscall hijacking (openat, read 등) | [📄 Report](./Assignment1/README.MD) |
-| **AS2** | **Process & Scheduling** | `Process_tracer` 커널 모듈, 다중 프로세스/스레드 성능 비교, CPU 스케줄링(FCFS, SJF, SRTF, RR) 시뮬레이터 | [📄 Report](./Assignment2/Assignment2.pdf) |
-| **AS3** | **Memory Management** | 가상 메모리 주소(VMA) 추적 시스템 콜, 페이지 교체 알고리즘(OPT, FIFO, LRU, Clock) 시뮬레이터 | [📄 Report](./Assignment3/Assignment3.pdf) |
-| **AS4** | **File System** | `/proc` 파일 시스템 기반 커널 정보 출력, FAT 구조의 User-level 파일 시스템 구현 및 데이터 지속성 관리 | [📄 Report](./Assignment4/Assignment4.pdf) |
+| **AS2** | **Process & Scheduling** | `Process_tracer` 커널 모듈, 다중 프로세스/스레드 성능 비교, CPU 스케줄링(FCFS, SJF, SRTF, RR) 시뮬레이터 | [📄 Report](./Assignment2/README.MD) |
+| **AS3** | **Memory Management** | 가상 메모리 주소(VMA) 추적 시스템 콜, 페이지 교체 알고리즘(OPT, FIFO, LRU, Clock) 시뮬레이터 | [📄 Report](./Assignment3/README.MD) |
+| **AS4** | **File System** | `/proc` 파일 시스템 기반 커널 정보 출력, FAT 구조의 User-level 파일 시스템 구현 및 데이터 지속성 관리 | [📄 Report](./Assignment4/README.MD) |
 
 
 ---
