@@ -5,7 +5,7 @@
 * - FCFS (First-come, First-Served, Non-preemptive)
 * - SJF  (Shortest Job First, Non-preemptvie)
 * - SRTF (Shortest Remaining Time First, Preemptive)
-* - Round Robin (Time-Quantum based, Time Quantum based)
+* - Round Robin (Time-Quantum based, Preemptive)
 * 
 * Design focuses on:
 * - Accurate modeling of context switch overhead
@@ -19,8 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-
-
 
 /* ------------------------------ Configuration ----------------------------- */
 #define MAX_TASKS 1000        // Maximum number of processes
@@ -53,7 +51,6 @@ typedef struct
 static Proc P[MAX_TASKS];
 static int N =0; 
 
-
 /* ------------------------------ Gantt Segments ----------------------------- */
 
 /*
@@ -79,13 +76,13 @@ static int segcap = 0;        // Segment capacity
 * If the new segment is contiguous with the previous one and
 * has the same pid, the segments are merged to reduce fragmentation
 */
-static void add_seg(double s, double e, int pid){
-    if (e <= s) return; 
+static void add_seg(double start, double end, int pid){
+    if (end <= start) return; 
 
     /* Merge with previous segment if possible */
-    if (segc && fabs(segs[segc-1].end - s) < 1e-9 && segs[segc-1].pid == pid)
+    if (segc && (fabs(segs[segc-1].end - start) < 1e-9 )&& (segs[segc-1].pid == pid))
     {
-        segs[segc-1].end = e;
+        segs[segc-1].end = end;
         return;
     }
       
@@ -96,9 +93,8 @@ static void add_seg(double s, double e, int pid){
         segs = (Segment*)realloc(segs, sizeof(Segment)*segcap);
     }
 
-    segs[segc++] = (Segment){s, e, pid}; 
+    segs[segc++] = (Segment){start, eend, pid}; 
 }
-
 
 
 /* ------------------------------ Utility Functions -------------------------- */
@@ -205,13 +201,14 @@ static int pick_SRTF(double now){
     return best;
 }
 
-
 /* ------------------------------ Gantt Chart -------------------------------- */
 /*
  * print_gantt()
- * -------------
+ * 
  * Prints a simplified Gantt chart using 1ms granularity.
  * Context switch intervals are skipped for clarity.
+ * 
+ * makespan : simulation total time
  */
 static void print_gantt(double makespan)
 {   
@@ -221,28 +218,27 @@ static void print_gantt(double makespan)
         int pid = PID_IDLE;
         for (int i=0;i<segc;i++){
             if (segs[i].start <= t + 1e-9 && segs[i].end > t + 1e-9) 
-	    {
+	        {
                 pid = segs[i].pid;
                 break;
             }
         }
-        if (pid == PID_CS) continue;    
+        if (pid == PID_CS) continue;    // Skip Context switching Overhead
         printf(" P%d |", pid);           
     }
     printf("\n");
 }
 
-
 /* ------------------------------ Statistics --------------------------------- */
 
 /*
- * Waiting time    = finish - arrival - burst
- * Response time   = first_start - arrival
- * Turnaround time = finish - arrival
+ * Waiting time    = Finish - arrival - burst
+ * Response time   = FirstStart - arrival
+ * Turnaround time = Finish - arrival
  * CPU utilization = (sum of bursts / makespan) * 100
  */
 static void print_stats(){
-    double sum_wait=0, sum_resp=0, sum_turn=0, work_sum=0, finish_max=0;
+    double sum_wait=0, sum_resp=0, sum_turn=0, sum_of_burst=0, finish_max=0;
     for (int i=0;i<N;i++)
     {
         double wait = P[i].finish - P[i].arrival - P[i].burst;
@@ -251,11 +247,11 @@ static void print_stats(){
         sum_wait += wait;
         sum_resp += resp;
         sum_turn += turn;
-        work_sum += P[i].burst;   
+        sum_of_burst += P[i].burst;   
         if (P[i].finish > finish_max) finish_max = P[i].finish; 
     }
     double avgW = sum_wait/N, avgR = sum_resp/N, avgT = sum_turn/N;
-    double util = (finish_max>0)? (work_sum/finish_max)*100.0 : 0.0;
+    double util = (finish_max>0)? (sum_of_burst/finish_max)*100.0 : 0.0;
 
     printf("Average Waiting Time =  %.2f\n", avgW);
     printf("Average Turnaround Time = %.2f\n",avgT);
@@ -381,6 +377,8 @@ static void simulate_SJF(){
 
         prev_pid = P[k].pid;
     }
+
+
     print_gantt(now);
     print_stats();
 }
@@ -484,7 +482,7 @@ static void enqueue_arrivals(Queue*Q, double from, double to)
 {
     for (int i=0;i<N;i++)
     {    
-        if (!P[i].done && P[i].arrival > from + 1e-9 && P[i].arrival <= to + 1e-9){
+        if ((!P[i].done) && (from + 1e-9 < P[i].arrival) && (P[i].arrival <= to + 1e-9)){
             q_push(Q, i);
         }
     }
@@ -500,7 +498,7 @@ static void simulate_RR(int tq)
     q_init(&Q); 
 
     /*
-     *  Fill initial idle time if first arrival > 0
+     *  1) Fill initial idle time if first arrival > 0
      */
     int nx = next_arrival_after(-1.0);
     if (nx>=0 && P[nx].arrival > 0){
@@ -509,7 +507,7 @@ static void simulate_RR(int tq)
     }
     
     /*
-     * Push all processes that already arrived
+     * 2) Push all processes that already arrived
      */
     for (int i=0;i<N;i++)
         if (P[i].arrival <= now + 1e-9) 
@@ -517,12 +515,11 @@ static void simulate_RR(int tq)
 
     int prev = PID_IDLE; 
 
-   
     while(!all_done())
     {
         if (q_empty(&Q)){
             /*
-             *  Queue empty → idle until next arrival
+             *  3) Queue empty → idle until next arrival
              */
             int j = next_arrival_after(now);
             if (j<0) break;
@@ -537,13 +534,13 @@ static void simulate_RR(int tq)
         }
 
         /*
-         *  Pop next process
+         *  4) Pop next process
          */
         int k = q_pop(&Q);
-        if (P[k].done) continue; // 이미 끝난 프로세스면  스킵(중복 방어)
+        if (P[k].done) continue; // Skip already done process
 
         /*
-         * Context switch handling
+         *  5) Context switch handling
          */
         if (prev != P[k].pid)
         {	
@@ -554,30 +551,28 @@ static void simulate_RR(int tq)
         }
 
         /*
-         * Record first execution
+         * 6) Record first execution
          */
+        
         if (!P[k].started){ 
-		P[k].first_start = now;
+            P[k].first_start = now;
 	       	P[k].started=1;
        	}
 
         /*
-         * Execute for one time quantum or until completion
+         * 7) Execute for one time quantum or until completion
          */
         double run_for = fmin((double)tq, P[k].remain);
         double end_time = now + run_for;  
 
         add_seg(now, end_time, P[k].pid);
-
-       
         enqueue_arrivals(&Q, now, end_time);
 
-	
         now = end_time; 
         P[k].remain -= run_for; 
 
         /*
-        * Completion check
+        * 8) Completion check
         */
         if (P[k].remain <= 1e-9) {
             P[k].remain=0;
@@ -613,17 +608,20 @@ int main(int argc, char**argv){
     const char* alg = argv[2];
     int tq = 0;
 
+    /* RR requires argv[3] */
     if (!strcmp(alg,"RR")){
         if (argc < 4){ fprintf(stderr,"RR requires time_quantum (ms)\n"); return 1; }
         tq = atoi(argv[3]);
         if (tq<=0){ fprintf(stderr,"time_quantum must be positive\n"); return 1; }
     }
 
-    
     FILE* f = fopen(in, "r");
-    if (!f){ perror("open input"); return 1; }
+    if (!f){ 
+        perror("Errpr : Open input file "); 
+        return 1; 
+    }
  
-    while (1){
+    while (true){
         int pid, arr, bur;
         int r = fscanf(f, "%d %d %d", &pid, &arr, &bur);
         if (r!=3) break;
@@ -635,21 +633,21 @@ int main(int argc, char**argv){
     }
 
     fclose(f);
-    if (N==0){ fprintf(stderr,"No tasks found in %s\n", in); return 1; }
+    if (N==0){
+        fprintf(stderr,"No tasks found in %s\n", in); 
+        return 1;
+    }
 
     qsort(P, N, sizeof(Proc), cmp_arrival);
 
-    
     if (!strcmp(alg,"FCFS")) simulate_FCFS();
     else if (!strcmp(alg,"SJF")) simulate_SJF();
     else if (!strcmp(alg,"SRTF")) simulate_SRTF();
     else if (!strcmp(alg,"RR")) simulate_RR(tq);
-    else { fprintf(stderr,"Unknown algorithm: %s\n", alg); return 1; }
+    else { 
+        fprintf(stderr,"Unknown algorithm: %s\n", alg); 
+        return 1; 
+    }
 
     return 0;
 }
-
-
-
-
-
