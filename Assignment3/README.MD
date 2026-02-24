@@ -1,6 +1,5 @@
 ## Introduction
 
-
 ### Assignment 3-1 
 -  프로세스의 PID 를 입력값으로 받아 해당 프로세스의 메모리 영역 정보를 출력하는 Kernel Module 을 구현한다.
 - 이를 위해 Assignment1 과제에서 구현하였던 ftrace 시스템 콜(번호 336)을 기반으로 새로운 시스템콜을 wrapping 하며, hooking 함수의 이름은 file_varea 로 정의한다. 출력해야 하는 정보는 다음과 같다.
@@ -62,7 +61,7 @@ gcc test.c
 ./a.out
 dmesg
 ```
-![alt text](image.png)
+![alt text](images/image.png)
 
 ### Assignment 4-2
 
@@ -103,7 +102,7 @@ vi input.3
 
 📌 Test case 01
 
-<img src="image-1.png" width="50%">
+<img src="images/image-1.png" width="50%">
 
 - OPT 가 가장 낮은 Page Faults (7 회)를 기록하였다.
 	이는 미래 참조 정보를 통해, 정확히 가장 손해가 적은 페이지를 교체하기 때문이다.
@@ -118,7 +117,7 @@ vi input.3
 
 📌 Test case 02
 
-<img src="image-2.png" width="50%">
+<img src="images/image-2.png" width="50%">
 
 -	OPT 는 Page Fault 가 5 번만 발생하고 가장 효율적이다.
 	초기 구간 1,2,3,4 를 제외하고, 이후 패턴은 반복성이 높아서 OPT 가 성능이 다른 모델에 비해 좋게 나옴을 알 수 있다.
@@ -133,7 +132,7 @@ vi input.3
 
 📌 Test case 03
 
-<img src="image-3.png" width="50%">
+<img src="images/image-3.png" width="50%">
 
 -	OPT 가 가장 적은 Page Fault(8 회)
 	참조열이 길고 다양하지만, 미래 참조 기반 선택을 하는	OPT 가 가장 효울적으로 결과가 나옴을 알 수 있다.
