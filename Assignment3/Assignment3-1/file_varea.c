@@ -1,24 +1,26 @@
-#include <asm/ptrace.h> // struct pt_regs
+#include <asm/ptrace.h>	// struct pt_regs
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/highmem.h>
-#include <linux/sched/mm.h> // get_task_mm()
+#include <linux/sched/mm.h>	// get_task_mm()
 #include <linux/mm_types.h>
 #include <linux/kallsyms.h>
 #include <linux/init_task.h>
-#include <linux/slab.h> // kmalloc , kfree
+#include <linux/slab.h>	// kmalloc , kfree
 #include <linux/fs.h>
-#include <linux/dcache.h> // d_path()
+#include <linux/dcache.h>	// d_path()
 #include <linux/path.h>
-#include <linux/limits.h> // PATH_MAX
-#include <linux/mm.h> // vm_area_struct 
+#include <linux/limits.h>	// PATH_MAX
+#include <linux/mm.h>	// vm_area_struct 
 
-void **syscall_table;  // sys_call_table address 저장
-void *real_ftrace;
+void **syscall_table;	// To store the address of the sys_call_table
+void *real_ftrace;		// Backup for the original system call
 
-// sys_call_table 쓰기 on
-void make_rw(void *addr)
-{
+/* ============================================================
+ *  Page permission helpers
+ * ============================================================ */
+void make_rw(void *addr){
+
 	unsigned int level;
 	pte_t *pte = lookup_address((unsigned long)addr,&level);
 
@@ -26,62 +28,54 @@ void make_rw(void *addr)
 		pte->pte |= _PAGE_RW;
 }
 
-// sys_call_table 다시 읽기 모드로 바꾸기
-void make_ro(void* addr)
-{
+void make_ro(void* addr){
+
 	unsigned int level;
 	pte_t *pte = lookup_address((unsigned long)addr,&level);
-
 	pte->pte &=~ _PAGE_RW;
 }
 
-
-/*
- * file_varea() - 과제 요구사항에 맞게 출력하는 부분
- * PID를 입력받아서 해당 프로세스의
- * 	- 코드영역, 데이터 영역, 힙 영역 출력
- * 	-mmap된 파일들의 실제 경로를 출력
-*/
+/**
+ * file_varea - Hooked system call implementation (replaces syscall 336)
+ * @regs: User-space registers passed via system call
+ * * Retrieves process memory layout (Code, Data, Heap) and prints
+ * absolute paths of memory-mapped files to the kernel log.
+ */
 static asmlinkage long file_varea(const struct pt_regs *regs)
 {
-	pid_t target = (pid_t)regs->di;  // user가 넘긴 PID
+	pid_t target = (pid_t)regs->di;	// PID passed from user-space
 
-	struct task_struct *task; // PID -> task_struct
-	struct mm_struct *mm; // Memory descriptor of process
-	struct vm_area_struct *vma; // for VMA 
+	struct task_struct *task; 
+	struct mm_struct *mm; 
+	struct vm_area_struct *vma;
 	
-	// PID -> task_struct 가져오기
+	// Locate task_struct for the given PID
 	task = pid_task(find_vpid(target),PIDTYPE_PID);
 	if(!task) return -ESRCH;
 	
-	// user process가 아니면 mm이 없을 수 있음
+	// Get memory descriptor; increments reference count
 	mm = get_task_mm(task);
 	if(!mm) return -EINVAL;	
 
-	// 프로세스 이름/코드/데이터/힙 영역 경계 출력
 	printk(KERN_INFO "######## Loaded files of a process' %s(%d)' in VM ########\n",
 			task->comm,target);
 
-	// mmap 리스트를 읽기위해서, read lock
+	// Acquire read lock to ensure consistency while traversing the VMA
 	down_read(&mm->mmap_sem);
 
-	// process의 모든 VMA 순회 
+	// Iterate through all Virtual Memory Areas (VMAs) of the process
 	for(vma = mm->mmap; vma; vma= vma -> vm_next){
-		
-		// 파일이 매핑된 경우에만 처리
-		if(vma->vm_file)
-		{
-			
-			// 파일 경로 출력 버퍼
+		// Process only VMAs that are backed by a file
+		if(vma->vm_file){
 			char*buf = kmalloc(PATH_MAX,GFP_KERNEL);
 			if(!buf){
-				printk(KERN_INFO"file_varea : kmalloc PATH_MAX failed\n");
+				printk(KERN_INFO "file_varea : kmalloc PATH_MAX failed\n");
 				break;
 			}
 
-			// dentry -> full path로 변환
-			char*path = d_path(&vma->vm_file->f_path,buf,PATH_MAX);
-			// 메모리 영역 및 파일경로 출력
+			// Resolve dentry/vfsmount into a full absoulte path string
+			char *path = d_path(&vma->vm_file->f_path,buf,PATH_MAX);
+			// Print memory area and file path
 			if(!IS_ERR(path)){
 				printk("mem(%lx~%lx) code(%lx~%lx) data(%lx~%lx) heap(%lx~%lx) %s\n",
 						(unsigned long)vma->vm_start,(unsigned long)vma->vm_end,
@@ -89,50 +83,40 @@ static asmlinkage long file_varea(const struct pt_regs *regs)
 						(unsigned long)mm->start_data,(unsigned long)mm->end_data,
 						(unsigned long)mm->start_brk,(unsigned long)mm->brk,
 						path);
-			
-			
 			}
 			kfree(buf);
 		}
-		
 	}
-
-	up_read(&mm->mmap_sem); // unlock
-
-	mmput(mm);// get_task_mm() 으로 참조 카운트 올렸으니 mmput()으로 카운트 감소
+	up_read(&mm->mmap_sem);	// Release VMA lock
+	mmput(mm);				// Decrement mm_struct reference count
 
 	return (long)target;
-
-
-
 }
 
-
 /*
- module init - system call 336 hooking 
+*  info_init - Module entry point
+*  Finds the sys_call_table address and hooks system call index 336
 */
-static int __init info_init(void)
-{
-	syscall_table = (void**) kallsyms_lookup_name("sys_call_table"); // sys_call_table 주소 가져오기
+static int __init info_init(void){
 
-	make_rw(syscall_table); // 쓰기 권한 부여
+	// Look up the system call table address by symbol name
+	syscall_table = (void**) kallsyms_lookup_name("sys_call_table"); 
 
-	real_ftrace = syscall_table[336]; // 원래의 시스템콜 백업
-	syscall_table[336] = file_varea; // 336번 시스템 콜 -> file_varea
-
-	make_ro(syscall_table); // 다시 읽기 전용으로 설정
+	make_rw(syscall_table); // Enable write access to the table
+	real_ftrace = syscall_table[336];	// Backup original system call
+	syscall_table[336] = file_varea;	// Overwrite with hook function
+	make_ro(syscall_table);				// Restore read-only protection
 	return 0;
 }
 
-/*
- module exit - recover systemcall
+/**
+ * info_exit - Module exit point
+ * Restores the original system call function to index 336.
  */
-static void __exit info_exit(void)
-{
+static void __exit info_exit(void){
+
 	make_rw(syscall_table);
-
-	syscall_table[336] = real_ftrace;; // reconstruct
-
+	syscall_table[336] = real_ftrace; // Restore original function pointer
 	make_ro(syscall_table);
 }
 
