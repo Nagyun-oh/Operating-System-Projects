@@ -10,30 +10,32 @@
 #include <linux/uidgid.h>
 #include <linux/sched/cputime.h>
 
-struct proc_dir_entry *oslab_fp_dir;  // For ->   /proc/proc_2021202089
-struct proc_dir_entry *oslab_fp_info;  // For ->  proc/proc_2021202089/processInfo
+/* Global variables for proc directory entries */
+struct proc_dir_entry *oslab_fp_dir;  // Target path: /proc/proc_2021202089
+struct proc_dir_entry *oslab_fp_info; // Target path: /proc/proc_2021202089/processInfo
 
-static int oslab_is_processed = 0; // 한 번 read()가 끝났는지 여부 확인용
-static int filter_pid = -1;// write를 통해 넘어온 PID 값 저장, -1이면 프로세스 전체 출력
-static int write_flag = 0; // proc 파일에 wrtie 요청이 있었는지 여부 확인 ( 0 이면 no write )
+/* State variables for process filtering and read control */
+static int oslab_is_processed = 0;	// Flag to prevent redundant output in a single read session
+static int filter_pid = -1;			// PID to filter; -1 indicates printing all processes
+static int write_flag = 0;			// Indicates whether a PID has been specified via write()
 
-
-// /proc/proc_2021202089/processinfo 파일을 열 때마다 수행
+/**
+ * oslab_open - Triggered when /proc/.../processInfo is opened
+ * Resets the processed flag to allow new read operations.
+ */
 int oslab_open(struct inode* inode, struct file* file){
 	oslab_is_processed = 0;
 	return 0;
 }
 
-
-/*
- 하나의 task_struct 에 대해서,
- - PID, PPID , UID, GID, utime, stime, state, name 을 buf 에 한줄로 출력
- - buf : 출력 버퍼 시작 주소
- - buf_size : 버퍼 총 크기
- - offset : 현재까지 buf 에 쌓인 바이트 수
- - p : 대상  프로세스의 tast_struct pointer
- - 반환값 : 새로 출력된 만큼 offset 이 증가된 값
-  */
+/**
+ * append_info - Appends formatted process information to the buffer
+ * @buf: Destination buffer in kernel space
+ * @buf_size: Total size of the buffer
+ * @offset: Current writing position (offset) in the buffer
+ * @p: Pointer to the task_struct of the target process
+ * * Returns the updated offset after appending.
+ */
 static int append_info(char*buf,int buf_size, int offset, struct task_struct *p)
 {
 	pid_t pid,ppid;
@@ -45,25 +47,19 @@ static int append_info(char*buf,int buf_size, int offset, struct task_struct *p)
 	unsigned long stime_ticks = 0;
 	const char* state_str;
 
-	// kernel이 관리하는 cputime (ns)를 얻어옴
+	/* Retrieve CPU time in nanoseconds and convert to jiffies */
 	task_cputime(p,&utime_ns,&stime_ns);
-	
-	// ns 단위를 jiffies(커널 틱 단위)로 변환함.
  	utime_ticks = nsecs_to_jiffies(utime_ns);
-        stime_ticks = nsecs_to_jiffies(stime_ns);
+    stime_ticks = nsecs_to_jiffies(stime_ns);
 
-	// PID , PPID
+	/* Get Process IDs and Credentials */
 	pid = p->pid;
 	ppid = p->real_parent ? p->real_parent->pid : 0;
-
-	// UID, GID 
 	uid = __kuid_val(p->cred->uid);
 	gid = __kgid_val(p->cred->gid);
 
-	// task 상태를 문자로 얻음 ( R,S,D,T,Z.. etc) 
+	/* Get process state character and map to descriptive string */
 	state = task_state_to_char(p);
-
-	// 상태 문자에 따라서 과제 출력형식에 맞게 문자열을 매핑시킴
 	switch(state){
 		case 'R' : state_str = "(running)"; break;
 		case 'S' : state_str = "(sleeping)"; break;
@@ -77,106 +73,109 @@ static int append_info(char*buf,int buf_size, int offset, struct task_struct *p)
 		default: state_str = "";	
 	}
 
-	// offset 갱신
+	/* Append formatted string to buffer and update offset */
 	offset += scnprintf(buf + offset, buf_size-offset,
 			"%-7d %-7d %-7d %-7d %-10lu %-10lu %-1c %-15s %s\n",
 			pid,ppid,uid,gid,utime_ticks,stime_ticks,state,
 			state_str,p->comm);
 
-	return offset;  // 업데이트된 offset 반환
-
+	return offset;  
 }
 
 
-//      /proc/proc_2021202089/processinfo 파일에 읽기 연산을 요청할때마다 수행
-// For  cat /proc/proc_2021202089/processInfo
+/**
+ * oslab_read - Handler for read() syscall on the proc file
+ * Iterates through task list and copies data to user space.
+ */
 ssize_t oslab_read(struct file* f,char __user* data_usr, size_t len, loff_t *off){
 	
 	char *buf;
-	int buf_size = 4096 * 50; // 커널 내부에서 사용할 임시 버퍼 설정 (200 KB) 
+	int buf_size = 4096 * 50; // Temporary kernel buffer (200 KB)
 	struct task_struct *p;
 	int offset = 0;
 	
-	// 한번 읽고나면, 다음 read() 에서는 반복 출력 방지
+	/* Ensure the content is only read once per open session */
 	if(oslab_is_processed) return 0;
 
-	// 커널 힙에서 버퍼할당
+	/* Allocate memory in kernel heap */
 	buf = kzalloc(buf_size,GFP_KERNEL);
 	if(!buf)return -ENOMEM;
 
-	//1)  print header
+	/* 1. Print Table Header */
 	offset += scnprintf(buf + offset , buf_size - offset,
 			"%-7s %-7s %-7s %-7s %-10s %-10s %-17s %s\n", 
 			"Pid", "PPid",  "Uid" ,"Gid" ,"utime","stime","State","Name");
 	offset += scnprintf(buf + offset , buf_size - offset,
 			"---------------------------------------------------------------------------------------------\n");
 
-	// 1) write x or 모든 프로세스 ( filter_pid ==-1)
-	if(!write_flag || filter_pid == -1)
-	{
+	/* 2. Traverse tasks based on filter_pid */
+	if(!write_flag || filter_pid == -1){
+		/* Case: Print all processes */
 		for_each_process(p){
 			offset = append_info(buf,buf_size,offset,p);
-			if(offset>= buf_size -200) break; // 버퍼가 거의 다 찼으면 탈출 
+			if(offset>= buf_size -200) break; // Buffer safety margin
 		}
-	}	
-	// 2) 특정 PID만 출력
-	else{
+	}else{
+		/* Case: Print specific process by PID */
 		for_each_process(p){
 			if(p->pid == filter_pid){
 				offset = append_info(buf,buf_size,offset,p);
 				break;
 			}
 		}
-	
 	}
 
-	if(offset > len) offset = len; // 요청한 길이(len) 보다 많이 만든 경우,  len까지만 잘라서 보내기
+	/* Boundary check: Do not exceed user-requested length */
+	if(offset > len) offset = len; 
 
-	// 커널 버퍼 -> user 버퍼
+	/* Copy data from kernel space to user space */
 	if(copy_to_user(data_usr,buf,offset)) return -EFAULT;
 
-	kfree(buf); // 커널 버퍼 해제
-	oslab_is_processed = 1; // 한번만 읽히도록 flag설정
+	kfree(buf);
+	oslab_is_processed = 1; 
 
-	return offset; // 유저에게 전달한 byte 수 리턴
+	return offset; 
 }
 
-// For echo (num) > /proc/proc_2021202089/processInfo
+/**
+ * oslab_write - Handler for write() syscall on the proc file
+ * Receives a PID from the user to filter subsequent read results.
+ */
 ssize_t oslab_write(struct file*f, const char __user *data_usr,size_t len, loff_t *off)
 {
-	char buf[32]; // 임시 버퍼
+	char buf[32];
 	ssize_t len_copied;
 	int ret,pid_val;
 
-	len_copied = len; // 요청한 길이 복사
-
-	// user space -> kernel space
+	len_copied = len; // temp
+	/* Copy data from user space to kernel space */
 	if(copy_from_user(buf,data_usr,len_copied)) return -EFAULT; 
+	buf[len_copied] = '\0'; 
 
-	buf[len_copied] = '\0'; // 끝에 널 문자 추가
-
-
-	// 문자열(num)을 정수로 변환 
+	/* Convert string input to integer PID */
 	ret = kstrtoint(buf,10,&pid_val);
-	if(ret<0)filter_pid = -1; // 아닌 경우 -> 전체 출력
-	else filter_pid = pid_val; // pid 입력받은 경우
+	if(ret<0)
+		filter_pid = -1; // Reset to 'all' if input is invalid
+	else 
+		filter_pid = pid_val; 
 
-	write_flag = 1; // write 했으니 1로 설정
-
+	write_flag = 1; 
 	return len_copied;
-
 }
 
 
-// proc 파일 시스템에 등록할 구조체
+/* File operations structure for the proc file */
 const struct file_operations oslab_ops =  {
 	.owner = THIS_MODULE,
-	.open = oslab_open,   // 파일 open시 호출
-	.read = oslab_read,   // 파일  read시 호출
-	.write = oslab_write, // 파일  write시 호출
+	.open = oslab_open,   
+	.read = oslab_read,   
+	.write = oslab_write, 
 };
 
-// 모듈이 로드될 때 실행
+/**
+ * oslab_init - Module entry point
+ * Creates the proc directory and the processInfo file.
+ */
 int __init oslab_init(void)
 {
 	oslab_fp_dir = proc_mkdir("proc_2021202089",NULL);
@@ -185,11 +184,14 @@ int __init oslab_init(void)
 	return 0;
 }
 
-// 모듈이 제거될때 실행 
+/**
+ * oslab_exit - Module cleanup point
+ * Removes the proc entries before unloading the module.
+ */
 void __exit oslab_exit(void)
 {
-	remove_proc_entry("processInfo",oslab_fp_dir); // 파일 entry  제거
-	remove_proc_entry("proc_2021202089",NULL);  // 디렉토리 entry 제거
+	remove_proc_entry("processInfo",oslab_fp_dir); 
+	remove_proc_entry("proc_2021202089",NULL);  
 }
 
 module_init(oslab_init);
